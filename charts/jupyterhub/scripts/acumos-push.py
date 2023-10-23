@@ -69,14 +69,16 @@ def _post_model(files, push_api, auth_api, tries, max_tries, extra_headers):
     r = requests.post(push_api, files=files, headers=headers)
 
     if r.status_code == 201:
-        logger.info("Model pushed successfully to {}".format(push_api))
+        logger.info(f"Model pushed successfully to {push_api}")
     else:
         clear_jwt()
         if r.status_code == 401 and tries != max_tries:
             logger.warning('Model push failed due to an authorization failure. Clearing credentials and trying again')
             _post_model(files, push_api, auth_api, tries + 1, max_tries, extra_headers)
         else:
-            raise AcumosError("Model push failed: {}".format(_ServerResponse(r.status_code, r.reason, r.text)))
+            raise AcumosError(
+                f"Model push failed: {_ServerResponse(r.status_code, r.reason, r.text)}"
+            )
 
 with open(path_join(dump_dir, 'model.zip'), 'rb') as model, \
     open(path_join(dump_dir, 'metadata.json')) as meta, \

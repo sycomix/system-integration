@@ -96,182 +96,174 @@ def cds_request(api_path):
 #--------------------------------------------------------------------------
 
 def verify_basic_auth(b64_credentials):
-    log("Verifying basic auth user credentials: {0}".format(b64_credentials))
-    global auth_url
-    global username
-    global password
-    global jwtToken
-    credentials = b64decode(b64_credentials).decode('utf-8')
-    username, password = credentials.split(':')
-    log('Issuing token request for user: {}'.format(username))
-    pdata='{{"request_body":{{"username":"{0}","password":"{1}"}}}}'.format(username, password)
-    r = requests.post(auth_url, data=pdata, headers={'Content-Type': 'application/json'}, verify=False)
-    if r.status_code == 200:
-        log('Auth successful for user: {0}'.format(username))
-        resp = r.json()
-        jwtToken[username] = resp['jwtToken']
-        log("Updated jwtToken for {}: {}".format(username, jwtToken[username]))
-        return True
-    else:
-        log('Auth failed for user: {0}'.format(username))
-        return False
+  log("Verifying basic auth user credentials: {0}".format(b64_credentials))
+  global auth_url
+  global username
+  global password
+  global jwtToken
+  credentials = b64decode(b64_credentials).decode('utf-8')
+  username, password = credentials.split(':')
+  log(f'Issuing token request for user: {username}')
+  pdata='{{"request_body":{{"username":"{0}","password":"{1}"}}}}'.format(username, password)
+  r = requests.post(auth_url, data=pdata, headers={'Content-Type': 'application/json'}, verify=False)
+  if r.status_code == 200:
+    log('Auth successful for user: {0}'.format(username))
+    resp = r.json()
+    jwtToken[username] = resp['jwtToken']
+    log(f"Updated jwtToken for {username}: {jwtToken[username]}")
+    return True
+  else:
+    log('Auth failed for user: {0}'.format(username))
+    return False
 
 #--------------------------------------------------------------------------
 # Process sub_request from nginx
 #--------------------------------------------------------------------------
 
 def listener(environ, start_response):
-    '''
+  '''
     Handler for the Acumos docker-proxy subrequest Auth API.
 
     Extract basic auth header and verify that the user can be authenticated by
     the Acumos Portal using the supplied credentials.
 
     '''
-    global response
-    global response_json
-    global solution
-    global solution_json
-    global revision
-    global revision_json
+  global response
+  global response_json
+  global solution
+  global solution_json
+  global revision
+  global revision_json
     # Don't include current SCRIPT_NAME (/auth) in the redirect URL
-    authok_url = 'https://{}:{}/authok{}'.format(proxy_host,proxy_port,
-      environ.get('HTTP_X_ORIGINAL_URI'))
+  authok_url = f"https://{proxy_host}:{proxy_port}/authok{environ.get('HTTP_X_ORIGINAL_URI')}"
 
-    # Per https://docs.python.org/3/library/wsgiref.html
-    log('request_uri: {0} '.format(request_uri(environ, include_query=True)))
-    log('authok_url: {0} '.format(authok_url))
-    uri = environ.get('HTTP_X_ORIGINAL_URI')
-    log('X-Original-URI: {0} '.format(uri))
-    log('AUTHORIZATION: {0} '.format(environ.get('HTTP_AUTHORIZATION')))
+  # Per https://docs.python.org/3/library/wsgiref.html
+  log('request_uri: {0} '.format(request_uri(environ, include_query=True)))
+  log('authok_url: {0} '.format(authok_url))
+  uri = environ.get('HTTP_X_ORIGINAL_URI')
+  log('X-Original-URI: {0} '.format(uri))
+  log('AUTHORIZATION: {0} '.format(environ.get('HTTP_AUTHORIZATION')))
 
     # Split the path with max 4 splits
     # /v2/square_5968f2ae-e0d6-46e6-81c1-dc19db3c4965/manifests/2
-    if (uri.find('/manifests/') != -1):
-        image, resource, version = uri.split('/')[-3:]
-        log("image={}, resource={}, version={}".format(image, resource, version))
-        log("Splitting image reference: {0}".format(image))
-        # Split the solutionId e.g.square_5968f2ae-e0d6-46e6-81c1-dc19db3c4965
-        lastIndexOfUnderscore =image.rindex('_')
-        name = image[0:lastIndexOfUnderscore]
-        solutionId = image[lastIndexOfUnderscore+1:len(image)]
-        log("name={}, solutionId={}".format(name, solutionId))
+  if (uri.find('/manifests/') != -1):
+    image, resource, version = uri.split('/')[-3:]
+    log(f"image={image}, resource={resource}, version={version}")
+    log("Splitting image reference: {0}".format(image))
+    # Split the solutionId e.g.square_5968f2ae-e0d6-46e6-81c1-dc19db3c4965
+    lastIndexOfUnderscore =image.rindex('_')
+    name = image[:lastIndexOfUnderscore]
+    solutionId = image[lastIndexOfUnderscore+1:]
+    log(f"name={name}, solutionId={solutionId}")
 
-    log("Splitting AUTHORIZATION header")
-    mode, b64_credentials = environ.get('HTTP_AUTHORIZATION','None None').split()
+  log("Splitting AUTHORIZATION header")
+  mode, b64_credentials = environ.get('HTTP_AUTHORIZATION','None None').split()
 
-    if (b64_credentials == 'None'):
-        log("No credentials")
-        start_response('401 Unauthenticated', [('WWW-Authenticate','BASIC realm="Sonatype Nexus Repository Manager"')])
+  if (b64_credentials == 'None'):
+    log("No credentials")
+    start_response('401 Unauthenticated', [('WWW-Authenticate','BASIC realm="Sonatype Nexus Repository Manager"')])
+    return []
+  else:
+    log("AUTHORIZATION header details: {0},{1}".format(mode,b64_credentials))
+    if (mode == "Basic"):
+      if verify_basic_auth(b64_credentials) == False:
+        log("Credentials not verified")
+        start_response('403 Forbidden', [])
+      else:
+        start_response('307 Temporarily Redirect', [('Location',authok_url)])
+      return []
+    elif (mode == "Bearer"):
+      log("Bearer token validation/refresh is a TODO!")
+      if (image == 'None'):
+        log("Credentials verified, base /v2/ request allowed")
+        start_response('307 Temporarily Redirect', [('Location',authok_url)])
         return []
-    else:
-        log("AUTHORIZATION header details: {0},{1}".format(mode,b64_credentials))
-        if (mode == "Basic"):
-            if verify_basic_auth(b64_credentials) == False:
-                log("Credentials not verified")
-                start_response('403 Forbidden', [])
-                return []
-            else:
-                start_response('307 Temporarily Redirect', [('Location',authok_url)])
-#                body = {"token": jwtToken[username], "expires_in": 3600}
-#                return [json.dumps(body)]
-                return []
-        elif (mode == "Bearer"):
-            log("Bearer token validation/refresh is a TODO!")
-            if (image == 'None'):
-                log("Credentials verified, base /v2/ request allowed")
-                start_response('307 Temporarily Redirect', [('Location',authok_url)])
-                return []
-            elif (resource == 'blobs'):
-                log("Credentials verified, blob request allowed")
-                start_response('307 Temporarily Redirect', [('Location',authok_url)])
-                return []
-            elif cds_request('/solution/{0}'.format(solutionId)):
-                solution = response
-                solution_json = response_json
-                if cds_request('/solution/{0}/revision'.format(solutionId)):
-                    for rev in response:
-                        revision_json = json.loads(rev, object_hook=JSONObject)
-                        if (revision_json.version == version):
-                            revision = response
-                            if cds_request('/user/search?loginName={0}'.format(username)):
-                                if (revision_json.userId == username):
-                                    log("User owns revision, allowed")
-                                    start_response('307 Temporarily Redirect', [('Location',authok_url)])
-                                    return []
-                                else:
-                                    if (revision.accessTypeCode != 'PR'):
-                                        log("Revision is not private, allowed")
-                                        start_response('307 Temporarily Redirect', [('Location',authok_url)])
-                                        return []
-                                    else:
-                                        log("Revision is private and not owned by user, denied")
-                                        start_response('403 Forbidden', [])
-                                        return []
-                            else:
-                                start_response('500 Internal Server Error', [])
-                                return []
+      elif (resource == 'blobs'):
+          log("Credentials verified, blob request allowed")
+          start_response('307 Temporarily Redirect', [('Location',authok_url)])
+          return []
+      elif cds_request('/solution/{0}'.format(solutionId)):
+        solution = response
+        solution_json = response_json
+        if cds_request('/solution/{0}/revision'.format(solutionId)):
+          for rev in response:
+            revision_json = json.loads(rev, object_hook=JSONObject)
+            if (revision_json.version == version):
+              revision = response
+              if cds_request('/user/search?loginName={0}'.format(username)):
+                if (revision_json.userId == username):
+                  log("User owns revision, allowed")
+                  start_response('307 Temporarily Redirect', [('Location',authok_url)])
+                elif revision.accessTypeCode == 'PR':
+                  log("Revision is private and not owned by user, denied")
+                  start_response('403 Forbidden', [])
                 else:
-                    start_response('500 Internal Server Error', [])
-                    return []
-            else:
+                  log("Revision is not private, allowed")
+                  start_response('307 Temporarily Redirect', [('Location',authok_url)])
+              else:
                 start_response('500 Internal Server Error', [])
-                return []
+              return []
+        else:
+          start_response('500 Internal Server Error', [])
+          return []
+      else:
+        start_response('500 Internal Server Error', [])
+        return []
 
 def main(argv=None):
-    '''
+  '''
     Main function for the Acumos docker-proxy subrequest Auth API.
     Uses https://wingware.com/psupport/python-manual/2.5/lib/module-wsgiref.simpleserver.html
 
     The process listens for basic authentication requests and checks them.
     Errors are displayed to stdout and logged, and returned as 401 responses.
     '''
-    program_name = os.path.basename(sys.argv[0])
+  program_name = os.path.basename(sys.argv[0])
 
-    try:
-        global logger
-        print('Logfile: {0}'.format(log_file))
-        logger = logging.getLogger('acumos')
-        if log_level > 0:
-            logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
-        handler = logging.handlers.RotatingFileHandler(log_file,
-                                                       maxBytes=1000000,
-                                                       backupCount=10)
-        date_format = '%Y-%m-%d %H:%M:%S.%f %z'
-        formatter = logging.Formatter('%(asctime)s %(name)s - '
-                                      '%(levelname)s - %(message)s',
-                                      date_format)
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.info('Started')
+  try:
+    global logger
+    print('Logfile: {0}'.format(log_file))
+    logger = logging.getLogger('acumos')
+    if log_level > 0:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+    handler = logging.handlers.RotatingFileHandler(log_file,
+                                                   maxBytes=1000000,
+                                                   backupCount=10)
+    date_format = '%Y-%m-%d %H:%M:%S.%f %z'
+    formatter = logging.Formatter('%(asctime)s %(name)s - '
+                                  '%(levelname)s - %(message)s',
+                                  date_format)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.info('Started')
 
-        logger.debug('docker-proxy auth port = {0}'.format(api_port))
-        logger.debug('docker-proxy auth path = {0}'.format(api_path))
-        logger.debug('acumos auth URL = {0}'.format(auth_url))
-        logger.debug('log file = {0}'.format(log_file))
-        logger.debug('log level = {0}'.format(log_level))
+    logger.debug('docker-proxy auth port = {0}'.format(api_port))
+    logger.debug('docker-proxy auth path = {0}'.format(api_path))
+    logger.debug('acumos auth URL = {0}'.format(auth_url))
+    logger.debug('log file = {0}'.format(log_file))
+    logger.debug('log level = {0}'.format(log_level))
 
-        httpd = make_server('', int(api_port), listener)
-        print('Serving on port {0}...'.format(api_port))
-        httpd.serve_forever()
+    httpd = make_server('', int(api_port), listener)
+    print('Serving on port {0}...'.format(api_port))
+    httpd.serve_forever()
 
-        logger.error('Main loop exited unexpectedly!')
-        return 0
+    logger.error('Main loop exited unexpectedly!')
+    return 0
 
-    except KeyboardInterrupt:
-        logger.info('Exiting on keyboard interrupt!')
-        return 0
+  except KeyboardInterrupt:
+      logger.info('Exiting on keyboard interrupt!')
+      return 0
 
-    except Exception as e:
-        indent = len(program_name) * ' '
-        sys.stderr.write(program_name + ': ' + repr(e) + '\n')
-        sys.stderr.write(indent + '  for help use --help\n')
-        sys.stderr.write(traceback.format_exc())
-        logger.critical('Exiting because of exception: {0}'.format(e))
-        logger.critical(traceback.format_exc())
-        return 2
+  except Exception as e:
+    indent = len(program_name) * ' '
+    sys.stderr.write(f'{program_name}: {repr(e)}' + '\n')
+    sys.stderr.write(indent + '  for help use --help\n')
+    sys.stderr.write(traceback.format_exc())
+    logger.critical('Exiting because of exception: {0}'.format(e))
+    logger.critical(traceback.format_exc())
+    return 2
 
 if __name__ == '__main__':
     sys.exit(main())
